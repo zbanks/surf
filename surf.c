@@ -45,6 +45,9 @@ enum {
 	ClkAny   = ClkDoc | ClkLink | ClkImg | ClkMedia | ClkSel | ClkEdit,
 };
 
+#define ModeAll (ModeNormal | ModeInsert)
+static enum { ModeNormal = 0x1, ModeInsert = 0x2 } currentmode = ModeNormal;
+
 typedef union Arg Arg;
 union Arg {
 	gboolean b;
@@ -64,6 +67,7 @@ typedef struct Client {
 } Client;
 
 typedef struct {
+    unsigned int mode;
 	guint mod;
 	guint keyval;
 	void (*func)(Client *c, const Arg *arg);
@@ -88,6 +92,11 @@ typedef struct {
 } CookieJarClass;
 
 G_DEFINE_TYPE(CookieJar, cookiejar, SOUP_TYPE_COOKIE_JAR_TEXT)
+
+typedef struct {
+    char * token;
+    char * uri;
+} SearchEngine;
 
 typedef struct {
 	char *regex;
@@ -176,6 +185,7 @@ static void loaduri(Client *c, const Arg *arg);
 static void navigate(Client *c, const Arg *arg);
 static Client *newclient(void);
 static void newwindow(Client *c, const Arg *arg, gboolean noembed);
+static gchar *parseuri(const gchar *uri);
 static void pasteuri(GtkClipboard *clipboard, const char *text, gpointer d);
 static gboolean contextmenu(WebKitWebView *view, GtkWidget *menu,
 		WebKitHitTestResult *target, gboolean keyboard, Client *c);
@@ -191,6 +201,7 @@ static void scroll_h(Client *c, const Arg *arg);
 static void scroll_v(Client *c, const Arg *arg);
 static void scroll(GtkAdjustment *a, const Arg *arg);
 static void setatom(Client *c, int a, const char *v);
+static void setmode(Client *c, const Arg *arg);
 static void setup(void);
 static void sigchld(int unused);
 static void source(Client *c, const Arg *arg);
@@ -684,6 +695,7 @@ keypress(GtkAccelGroup *group, GObject *obj,
 	updatewinid(c);
 	for(i = 0; i < LENGTH(keys); i++) {
 		if(key == keys[i].keyval
+                && (currentmode & keys[i].mode)
 				&& mods == keys[i].mod
 				&& keys[i].func) {
 			keys[i].func(c, &(keys[i].arg));
@@ -761,8 +773,7 @@ loaduri(Client *c, const Arg *arg) {
 		u = g_strdup_printf("file://%s", rp);
 		free(rp);
 	} else {
-		u = g_strrstr(uri, "://") ? g_strdup(uri)
-			: g_strdup_printf("http://%s", uri);
+        u = parseuri(uri);
 	}
 
 	setatom(c, AtomUri, uri);
@@ -1094,6 +1105,21 @@ menuactivate(GtkMenuItem *item, Client *c) {
 	}
 }
 
+static gchar * 
+parseuri(const gchar * uri) {
+    guint i;
+    for (i = 0; i < LENGTH(searchengines); i++) {
+        if (searchengines[i].token == NULL 
+                || searchengines[i].uri == NULL 
+                || *(uri + strlen(searchengines[i].token)) != ' ')
+            continue;
+        if (g_str_has_prefix(uri, searchengines[i].token))
+            return g_strdup_printf(searchengines[i].uri, uri + strlen(searchengines[i].token) + 1);
+    }
+
+    return g_strrstr(uri, "://") ? g_strdup(uri) : g_strdup_printf("http://%s", uri);
+}
+
 static void
 pasteuri(GtkClipboard *clipboard, const char *text, gpointer d) {
 	Arg arg = {.v = text };
@@ -1198,6 +1224,11 @@ setatom(Client *c, int a, const char *v) {
 	XChangeProperty(dpy, GDK_WINDOW_XID(GTK_WIDGET(c->win)->window),
 			atoms[a], XA_STRING, 8, PropModeReplace,
 			(unsigned char *)v, strlen(v) + 1);
+}
+
+static void
+setmode(Client *c, const Arg *arg) {
+    currentmode = arg->i;
 }
 
 static void
